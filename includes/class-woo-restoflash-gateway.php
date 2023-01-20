@@ -6,7 +6,7 @@
  *
  * @class       Woo_Restoflash_Gateway
  * @extends     WC_Payment_Gateway
- * @version     1.0.0
+ * @version     1.0.1
  * @package     WooCommerce/Classes/Payment
  */
 if (!defined('ABSPATH')) {
