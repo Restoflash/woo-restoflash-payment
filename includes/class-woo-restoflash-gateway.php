@@ -85,6 +85,16 @@ function init_restoflash_gateway_class()
 			$this->form_fields = include 'restoflash-settings.php';
 		}
 
+		function get_request_timestamp($unique_key){
+			$transcient_key = 'restoflash_timestamp_' . $unique_key;
+		
+			if (false === ($timestamp = get_transient($transcient_key))) {
+				$timestamp = time()*1000;
+				set_transient($transcient_key, $timestamp, 3600);
+			}
+			return $timestamp;
+		}
+
 		public function process_payment($order_id)
 		{
 			global $woocommerce;
@@ -93,7 +103,7 @@ function init_restoflash_gateway_class()
 			$one_click_token = $customer->get_meta('restoflash-oneclick');
 
 			$reference = base64url_encode($order->order_key);
-			$value = number_format($order->get_total(), 2, '.', '');
+			$encoded_value = base64url_encode(number_format($order->get_total(), 2, '.', ''));
 			$IMEI = $this->get_option('imei');
 			$email = wp_get_current_user()->user_email;
 
@@ -105,10 +115,10 @@ function init_restoflash_gateway_class()
 					home_url('/restoflash_payment')
 				);
 			$redirect_back_url = base64url_encode($redirect_back_url);
-
+			$timestamp_key = $reference . '_' . $encoded_value;
 			$payload = array(
-				'transacTimeInMillis' => time() * 1000,
-				'encodedValue' => base64url_encode($value),
+				'transacTimeInMillis' => $this->get_request_timestamp($timestamp_key),
+				'encodedValue' => $encoded_value,
 				'acceptPartial' => true,
 				'encodedImei' => base64url_encode($IMEI),
 				'credentialToken' => $one_click_token,
@@ -147,7 +157,7 @@ function init_restoflash_gateway_class()
 						);
 				}
 			} else {
-				wc_print_notice(__($response->msg, 'woo-restoflash-gateway'), 'error');
+				wc_add_notice($response->msg, 'error');
 				return array(
 					'result' => 'fail',
 					'redirect' => wc_get_checkout_url(),
