@@ -214,7 +214,7 @@ function init_restoflash_gateway_class()
 		public function handle_restoflash_payment()
 		{
 			global $wp_query;
-			if ($wp_query->query_vars['name'] != 'restoflash_payment') {
+			if (!isset($wp_query->query_vars['restoflash_payment'])) {
 				return;
 			}
 			if (!isset($_GET['order_id'])) {
