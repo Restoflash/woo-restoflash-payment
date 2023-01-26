@@ -6,7 +6,7 @@
  *
  * @class       Woo_Restoflash_Gateway
  * @extends     WC_Payment_Gateway
- * @version     1.0.1
+ * @version     1.0.3
  * @package     WooCommerce/Classes/Payment
  */
 if (!defined('ABSPATH')) {
@@ -39,14 +39,13 @@ function init_restoflash_gateway_class()
 
 			$this->supports = array(
 				'refunds'
-			  );
+			);
 
 			if (is_admin()) {
 				add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
 			}
 			add_action('woocommerce_review_order_before_submit', array($this, 'add_restoflash_one_click_infos'));
 			add_action('woocommerce_thankyou_restoflash', array($this, 'thankyou_page'));
-			add_action('template_redirect', array($this, 'handle_restoflash_payment'));
 
 		}
 
@@ -85,11 +84,12 @@ function init_restoflash_gateway_class()
 			$this->form_fields = include 'restoflash-settings.php';
 		}
 
-		function get_request_timestamp($unique_key){
+		function get_request_timestamp($unique_key)
+		{
 			$transcient_key = 'restoflash_timestamp_' . $unique_key;
-		
+
 			if (false === ($timestamp = get_transient($transcient_key))) {
-				$timestamp = time()*1000;
+				$timestamp = time() * 1000;
 				set_transient($transcient_key, $timestamp, 3600);
 			}
 			return $timestamp;
@@ -107,13 +107,9 @@ function init_restoflash_gateway_class()
 			$IMEI = $this->get_option('imei');
 			$email = wp_get_current_user()->user_email;
 
-				
-			$redirect_back_url = add_query_arg(
-					array(
-						'order_id' => $order_id,
-					),
-					home_url('/restoflash_payment')
-				);
+			$redirect_back_url = get_rest_url(null, 'restoflash/v1/payment/' . $order_id);
+			$redirect_back_url = wp_nonce_url($redirect_back_url, 'wp_rest');
+
 			$redirect_back_url = base64url_encode($redirect_back_url);
 			$timestamp_key = $reference . '_' . $encoded_value;
 			$payload = array(
@@ -165,7 +161,8 @@ function init_restoflash_gateway_class()
 			}
 		}
 
-		public function process_refund( $order_id, $amount = null, $reason = '' ) {
+		public function process_refund($order_id, $amount = null, $reason = '')
+		{
 			$order = new WC_Order($order_id);
 			$transaction_id = $order->get_transaction_id();
 			$total_amount = $order->get_total();
@@ -174,26 +171,25 @@ function init_restoflash_gateway_class()
 			$response = post_refound_transaction($this->get_auth_header(), $this->get_restoflash_api_url(), $transaction_id, $total_amount, $amount_to_refound, $encoded_imei);
 			if ($response['status'] == 'success') {
 				$transaction = $response['result'];
-				if($transaction == 0) // complete refound
+				if ($transaction == 0) // complete refound
 				{
-					
+
 					$order->add_order_note(
 						sprintf(
 							/* translators: 1: amount 2: transaction id */
-							__( 'Remboursement sur le compte Resto Flash de l\'usager (%1$s)', 'woo-restoflash-gateway' ),
-							wc_price( $amount_to_refound )
+							__('Remboursement sur le compte Resto Flash de l\'usager (%1$s)', 'woo-restoflash-gateway'),
+							wc_price($amount_to_refound)
 						)
 					);
 					$order->update_status('refounded');
-				}
-				else{
-					
+				} else {
+
 					$order->add_order_note(
 						sprintf(
 							/* translators: 1: amount 2: transaction id */
-							__( 'Remboursement partiel sur le compte Resto Flash de l\'usager : %1$s sur %2$s', 'woo-restoflash-gateway' ),
-							wc_price( $amount_to_refound ),
-							wc_price( $total_amount)
+							__('Remboursement partiel sur le compte Resto Flash de l\'usager : %1$s sur %2$s', 'woo-restoflash-gateway'),
+							wc_price($amount_to_refound),
+							wc_price($total_amount)
 						)
 					);
 				}
@@ -202,64 +198,76 @@ function init_restoflash_gateway_class()
 				$order->add_order_note(
 					sprintf(
 						/* translators: 1: amount 2: transaction id */
-						__( 'Le remboursement Resto Flash a échoué avec l\'erreur %1$s', 'woo-restoflash-gateway' ),
+						__('Le remboursement Resto Flash a échoué avec l\'erreur %1$s', 'woo-restoflash-gateway'),
 						$response['msg']
 					)
 				);
-				return new WP_Error( 'restoflash_refund_error', $response['msg'] );
+				return new WP_Error('restoflash_refund_error', $response['msg']);
 			}
 
-		  }
-
-		public function handle_restoflash_payment()
-		{
-			global $wp_query;
-			if (!isset($wp_query->query_vars['restoflash_payment'])) {
-				return;
-			}
-			if (!isset($_GET['order_id'])) {
-				wp_redirect(wc_get_checkout_url());
-				exit;
-			}
-			$order_id = $_GET['order_id'];
-			$order = new WC_Order($order_id);
-			if ($order->has_status('completed')) {
-				wp_redirect($this->get_return_url($order));
-				exit;
-			}
-			$request_id = $order->get_meta('restoflash_request_id');
-
-			$response = get_restoflash_status($this->get_auth_header(), $this->get_restoflash_api_url(), $request_id);
-
-			if ($response['status'] === 'success') {
-				
-				$result = $response['transaction_web_result'];
-				$state = $result->state;
-
-				switch($state){
-					case 'VALIDATED':
-						$this->transaction_completed($order, $response['transaction_web_result']);
-						wp_redirect($this->get_return_url($order));
-						break;
-					case 'REJECTED':
-						$this->transaction_rejected($order, $request_id);
-						wc_add_notice(__("Le paiement Resto Flash a été rejeté", 'woo-restoflash-gateway'), 'error');
-						wp_redirect(wc_get_checkout_url());
-						break;
-					case 'CANCELED':
-						wc_add_notice(__("Le paiement Resto Flash a été annulé", 'woo-restoflash-gateway'), 'error');
-						wp_redirect( wc_get_checkout_url());
-						break;
-				}	
-				exit;
-			} else {
-				$error_msg = esc_html($response['msg']);
-				$this->transaction_rejected($order, $request_id);
-				wc_add_notice(__($error_msg, 'woo-restoflash-gateway'), 'error');
-				wp_redirect(wc_get_checkout_url());
-				exit;
-			}
 		}
+
+
+		public function handle_restoflash_payment_id($order_id)
+		{
+			try {
+				$order = new WC_Order($order_id);
+				$customer_id = wp_get_current_user();
+				// Check if order user is same as current user
+				if ($order->get_user_id() != $customer_id->ID) {
+					wp_redirect(wc_get_checkout_url());
+					exit;
+				}
+				
+				if (!isset($order) || $order->has_status('completed')) {
+					wp_redirect($this->get_return_url($order));
+					exit;
+				}
+				if($order->is_paid())
+				{
+					wp_redirect($this->get_return_url($order));
+					exit;
+				}
+				$request_id = $order->get_meta('restoflash_request_id');
+
+				$response = get_restoflash_status($this->get_auth_header(), $this->get_restoflash_api_url(), $request_id);
+
+				if ($response['status'] === 'success') {
+
+					$result = $response['transaction_web_result'];
+					$state = $result->state;
+
+					switch ($state) {
+						case 'VALIDATED':
+							$this->transaction_completed($order, $response['transaction_web_result']);
+							wp_redirect($this->get_return_url($order));
+							break;
+						case 'REJECTED':
+							$this->transaction_rejected($order, $request_id);
+							wc_add_notice(__("Le paiement Resto Flash a été rejeté", 'woo-restoflash-gateway'), 'error');
+							wp_redirect(wc_get_checkout_url());
+							break;
+						case 'CANCELED':
+							wc_add_notice(__("Le paiement Resto Flash a été annulé", 'woo-restoflash-gateway'), 'error');
+							wp_redirect(wc_get_checkout_url());
+							break;
+					}
+					exit;
+				} else {
+					$error_msg = esc_html($response['msg']);
+					$this->transaction_rejected($order, $request_id);
+					wc_add_notice(__($error_msg, 'woo-restoflash-gateway'), 'error');
+					wp_redirect(wc_get_checkout_url());
+					exit;
+				}
+
+			} catch (exception $e) {
+				wp_redirect(wc_get_checkout_url());
+				exit;
+			}
+
+		}
+
 
 		public function transaction_completed($order, $transaction_web_restult)
 		{
